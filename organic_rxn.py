@@ -1,4 +1,4 @@
-from chem_info import Chemical, chem_info
+from chem_info import chem_info
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from rdkit.Chem import AllChem, Draw
 
