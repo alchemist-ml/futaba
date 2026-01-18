@@ -1,6 +1,41 @@
-from chem_info import chem_info
+import pubchempy as pcp
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from rdkit.Chem import AllChem, Draw
+
+class Chemical():
+    def __init__(self, name, formula, iupac, synonyms, weight, cano_smiles, iso_smiles):
+        self.name = name
+        self.formula = formula
+        self.iupac_name = iupac
+        self.synonyms = synonyms
+        self.weight = weight
+        self.cano_smiles = cano_smiles
+        self.iso_smiles = iso_smiles
+
+
+def chem_info(query, query_type):
+    compounds = pcp.get_compounds(query, query_type)
+
+    if not compounds:
+        return f"Error: No compound found for '{query}' with type: <{query_type}>"
+    
+    compound  = compounds[0]
+
+    if query_type == 'name':
+        name = query
+        formula = compound.molecular_formula
+    elif query_type == 'formula':
+        formula = query
+        name = compound.synonyms[0]
+
+    iupac = compound.iupac_name
+    synonyms = compound.synonyms[1:4] if compound.synonyms else []
+    weight = compound.molecular_weight
+    cano_smiles = compound.connectivity_smiles
+    iso_smiles = compound.smiles
+
+    return Chemical(name, formula, iupac, synonyms, weight, cano_smiles, iso_smiles)
+
 
 def rxn(smiles, model_name):
     tokenizer = AutoTokenizer.from_pretrained(model_name, return_tensors='pt')
@@ -11,18 +46,6 @@ def rxn(smiles, model_name):
     output = tokenizer.decode(output['sequences'][0], skip_special_tokens=True).replace(' ', '').rstrip('.')
     return output
 
-
-def compound_data(compound: str, query_type: str) -> str:
-    c = chem_info(compound, query_type)
-    return f"""
-Name: {c.name}
-Formula: {c.formula}
-IUPAC name: {c.iupac_name}
-Synonyms: {c.synonyms}
-Molecular wt.: {c.weight}
-Canonical SMILES: {c.cano_smiles}
-Isomeric SMILES: {c.iso_smiles}
-          """
 
 def fwd(reactant: list, reagent: list) -> str:
     rc_smiles = reactant[0]
@@ -37,6 +60,7 @@ def fwd(reactant: list, reagent: list) -> str:
     model_fwd = "sagawa/ReactionT5v2-forward"
     return rxn(f"REACTANT:{rc_smiles}REAGENT:{re_smiles}", model_fwd)
 
+
 def retro(product: list) -> str:
     prod_smiles = product[0]
 
@@ -45,6 +69,7 @@ def retro(product: list) -> str:
     
     model_retro = "sagawa/ReactionT5v2-retrosynthesis"
     return rxn(prod_smiles, model_retro)
+
 
 def visualization(reactant: str, reagent: str, product: str):
     rxn_smiles = f"{reactant}>{reagent}>{product}"
