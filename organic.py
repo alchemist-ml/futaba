@@ -1,6 +1,13 @@
 import pubchempy as pcp
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from rdkit.Chem import AllChem, Draw
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import io
+import base64
+
+app = Flask(__name__)
+CORS(app)
 
 class Chemical():
     def __init__(self, name, formula, iupac, synonyms, weight, cano_smiles, iso_smiles):
@@ -11,7 +18,6 @@ class Chemical():
         self.weight = weight
         self.cano_smiles = cano_smiles
         self.iso_smiles = iso_smiles
-
 
 def chem_info(query, query_type):
     compounds = pcp.get_compounds(query, query_type)
@@ -26,7 +32,10 @@ def chem_info(query, query_type):
         formula = compound.molecular_formula
     elif query_type == 'formula':
         formula = query
-        name = compound.synonyms[0]
+        name = compound.synonyms[0] if compound.synonyms else query
+    elif query_type == 'smiles':
+        formula = compound.molecular_formula
+        name = compound.synonyms[0] if compound.synonyms else query
 
     iupac = compound.iupac_name
     synonyms = compound.synonyms[1:4] if compound.synonyms else []
@@ -36,8 +45,11 @@ def chem_info(query, query_type):
 
     return Chemical(name, formula, iupac, synonyms, weight, cano_smiles, iso_smiles)
 
-
 def rxn(smiles, model_name):
+    if "retrosynthesis" in model_name.lower():
+        from chemformer_helper import chemformer
+        return chemformer.predict(smiles).replace(' ', '').rstrip('.')
+    
     tokenizer = AutoTokenizer.from_pretrained(model_name, return_tensors='pt')
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
 
@@ -46,10 +58,12 @@ def rxn(smiles, model_name):
     output = tokenizer.decode(output['sequences'][0], skip_special_tokens=True).replace(' ', '').rstrip('.')
     return output
 
-
 def fwd(reactant: list, reagent: list) -> str:
+    if not reactant:
+        return "No reactants provided"
+    
     rc_smiles = reactant[0]
-    re_smiles = reagent[0]
+    re_smiles = reagent[0] if reagent else ""
 
     for rc in reactant[1:]:
         rc_smiles += '.'+rc
@@ -60,19 +74,60 @@ def fwd(reactant: list, reagent: list) -> str:
     model_fwd = "sagawa/ReactionT5v2-forward"
     return rxn(f"REACTANT:{rc_smiles}REAGENT:{re_smiles}", model_fwd)
 
+def create_reaction_image(reactants, products):
+    try:
+        if not reactants or not products:
+            return None
+        
+        reactant_smiles = '.'.join(reactants)
+        product_smiles = '.'.join(products)
+        
+        rxn_smiles = f"{reactant_smiles}>>{product_smiles}"
+        rxn = AllChem.ReactionFromSmarts(rxn_smiles, useSmiles=True)
+        
+        img = Draw.ReactionToImage(rxn, subImgSize=(600, 300))
+        
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG')
+        img_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+        
+        return img_base64
+    except Exception as e:
+        print(f"Image creation error: {e}")
+        return None
 
-def retro(product: list) -> str:
-    prod_smiles = product[0]
+@app.route('/chem_info', methods=['POST'])
+def get_chem_info():
+    data = request.json
+    query = data['query']
+    query_type = data['query_type']
+    chem = chem_info(query, query_type)
+    if isinstance(chem, str):
+        return jsonify({"error": chem})
+    return jsonify({
+        "name": chem.name,
+        "formula": chem.formula,
+        "iupac_name": chem.iupac_name,
+        "synonyms": chem.synonyms,
+        "weight": str(chem.weight),
+        "cano_smiles": chem.cano_smiles,
+        "iso_smiles": chem.iso_smiles
+    })
 
-    for prod in product[1:]:
-        prod_smiles += '.'+prod
+@app.route('/predict', methods=['POST'])
+def predict():
+    data = request.json
+    reactants = data['reactants']
+    reagents = data.get('reagents', [])
     
-    model_retro = "sagawa/ReactionT5v2-retrosynthesis"
-    return rxn(prod_smiles, model_retro)
+    reaction_products = fwd(reactants, reagents)
+    
+    image_base64 = create_reaction_image(reactants, reaction_products.split('.'))
+    
+    return jsonify({
+        "reaction": reaction_products,
+        "image_base64": image_base64
+    })
 
-
-def visualization(reactant: str, reagent: str, product: str):
-    rxn_smiles = f"{reactant}>{reagent}>{product}"
-    rxn = AllChem.ReactionFromSmarts(rxn_smiles, useSmiles=True)
-    img = Draw.ReactionToImage(rxn, subImgSize=(800, 800))
-    img.save(rxn_smiles+'.png')
+if __name__ == "__main__":
+    app.run(debug=True, host='0.0.0.0', port=5000)
