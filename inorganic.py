@@ -1,8 +1,14 @@
+import os
+
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 import csv
 from collections import defaultdict
 import math
 import re
 from chemlib import Compound
+import json
+import sys
 
 
 def load_ions(filename: str):
@@ -233,5 +239,4 @@ def react(reactant: list):
 
 
 if __name__ == "__main__":
-    # print(react(["Mg(OH)2", "H2SO4"]))
-    ...
+    print(json.dumps({"products": react(sys.argv[1:])}))
