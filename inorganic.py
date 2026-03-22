@@ -1,5 +1,7 @@
 from enum import Enum
+from collections import defaultdict
 import csv
+import math
 import re
 from chemlib import Compound
 
@@ -63,20 +65,23 @@ class Element:
 
 
 def load_ions(filename: str):
-    ions_dict = {}
+    ions_dict = defaultdict(list)
 
     with open(filename, "r") as f:
         reader = csv.reader(f)
         next(reader)
 
         for row in reader:
-            if row[0].startswith('#---'):
+            if row[0].startswith('"---'):
                 continue
 
             try:
                 ion = row[0].strip().strip('"')
                 charge = int(row[1])
-                ions_dict[ion] = charge
+                if ion in ions_dict:
+                    ions_dict[ion].append(charge)
+                else:
+                    ions_dict[ion].append(charge)
             except ValueError:
                 continue
 
@@ -196,7 +201,8 @@ def single_displacement(r1: Comp, r2: Comp):
         p1 = r1.ions[0] + str(r2_i2) + r2.ions[1] + str(r1_i1)
         p2 = r2.ions[0]
 
-    return tidy(p1, p2)
+    p1, p2 = tidy(p1), tidy(p2)
+    return [p1, p2]
 
 
 def oxidation(r1: Comp):
@@ -229,50 +235,104 @@ def double_displacement(r1: Comp, r2: Comp):
     else:
         p2 = r2.ions[0] + str(r1_i2) + r1.ions[1] + str(r2_i1)
 
-    return tidy(p1, p2)
+    p1, p2 = tidy(p1), tidy(p2)
+    return [p1, p2]
 
 
-def tidy(*args: str):
+def tidy(arg):
+    arg = arg.replace("+", "").replace("-", "").replace("1", "")
+    product = "H2O" if arg == "HOH" else arg
+    return product
+
+
+def shuffle(reactants: list):
+
+    reactant_ions = []
+    for r in reactants:
+        reactant_ions += extract_ions(r)
+
+    species = [{i: ion_charge[i][0]} for i in reactant_ions]
+    no_of_species = len(species)
+
     products = []
-    for p in args:
-        products.append(p.replace("+", "").replace("-", "").replace("1", ""))
+    for i in range(no_of_species):
+        for j in range(no_of_species):
+            if species[i] == species[j]:
+                continue
 
-    products = ["H2O" if x == "HOH" else x for x in products]
+            i1, c1 = next(iter(species[i].items()))
+            i2, c2 = next(iter(species[j].items()))
+            if (c1 > 0 and c2 > 0) or (c1 < 0 and c2 < 0):
+                continue
 
-    return products
+            cation, anion = (i1, i2) if c1 > c2 else (i2, i1)
+            if c1 < c2:
+                c1, c2 = c2, c1
 
+            gcd = math.gcd(c1, -1 * c2)
+            c1 = int(c1 / gcd)
+            c2 = int(c2 / gcd)
 
-def shuffle(ions: list): ...
+            products.append(cation + str(c2) + anion + str(c1))
+            products = list(set(products))
+
+    final_products = []
+    for p in products:
+        if tidy(p) in reactants:
+            continue
+        final_products.append(tidy(p))
+    return final_products
 
 
 if __name__ == "__main__":
-
-    test_formulas = [
-        "H2SO4",
-        "NaCl",
-        "Ca(OH)2",
-        "(NH4)2SO4",
-        "Al2(SO4)3",
-        "Fe2(SO4)3",
-        "KMnO4",
-        "Na2Cr2O7",
-        "CH3COOH",
-        "NaHCO3",
-        "Mg(NO3)2",
-        "Ca3(PO4)2",
-        "NH4Cl",
-        "NaOH",
-        "CuSO4",
-        "FeCl3",
-        "Na2CO3",
-        "CaCO3",
+    acid_base_tests = [
+        ["HCl", "NaOH"],
+        ["H2SO4", "KOH"],
+        ["HNO3", "Ca(OH)2"],
+        ["H3PO4", "NaOH"],
+        ["H2CO3", "Mg(OH)2"],
+    ]
+    metal_acid_tests = [
+        ["Zn", "HCl"],
+        ["Mg", "H2SO4"],
+        ["Fe", "HCl"],
+        ["Al", "HNO3"],
+        ["Ca", "H2SO4"],
+    ]
+    double_displacement_tests = [
+        ["NaCl", "AgNO3"],
+        ["BaCl2", "Na2SO4"],
+        ["KBr", "Pb(NO3)2"],
+        ["CaCl2", "Na2CO3"],
+        ["Na2S", "Cd(NO3)2"],
+    ]
+    synthesis_tests = [
+        ["H2", "O2"],
+        ["Na", "Cl2"],
+        ["N2", "H2"],
+        ["Ca", "O2"],
     ]
 
-    for formula in test_formulas:
-        ions = extract_ions(formula)
-        for i in ions:
-            if ions.count(i) > 1:
-                ions.append(i + str(ions.count(i)))
-                ions = list(set(ions))
+    print("\nAcid base test:")
+    for reactants in acid_base_tests:
+        print(
+            f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
+        )
 
-        print(formula, ions)
+    print("\nMetal acid test:")
+    for reactants in metal_acid_tests:
+        print(
+            f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
+        )
+
+    print("\nDouble displacement test:")
+    for reactants in double_displacement_tests:
+        print(
+            f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
+        )
+
+    print("\nSynthesis/Combinationtest:")
+    for reactants in synthesis_tests:
+        print(
+            f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
+        )
