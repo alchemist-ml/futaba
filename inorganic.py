@@ -1,67 +1,8 @@
-from enum import Enum
-from collections import defaultdict
 import csv
+from collections import defaultdict
 import math
 import re
 from chemlib import Compound
-
-
-class ElGroup(Enum):
-    ALKALI_METALS = 0
-    ALKALINE_EARTH_METALS = 1
-    TRANSITION_METALS = 2
-    BORON_GROUP = 3
-    CARBON_GROUP = 4
-    NITROGEN_GROUP = 5
-    OXYGEN_GROUP = 6
-    HALOGENS = 7
-    NOBLE_GASES = 8
-
-
-class ComType(Enum):
-    ACID = 0
-    BASE = 1
-    AMPHOTERIC = 2
-    SALT = 3
-    HALIDE = 4
-    OXYSALT = 5
-    OXIDE = 6
-    HYDROXIDE = 7
-    PEROXIDE = 8
-    SUPEROXIDE = 9
-    HYDRIDE = 10
-    HYDRATE = 11
-    AMMONIATE = 12
-    SULPHIDE = 13
-    NITRIDE = 14
-    CARBIDE = 15
-    PHOSPHIDE = 16
-    BORIDE = 17
-    SILICIDE = 18
-    COORDINATION = 19
-    GENERIC = 20
-
-
-class Element:
-    def __init__(
-        self,
-        symbol: str,
-        name: str,
-        group: ElGroup,
-        at_num: int,
-        oxi: list = [0],
-        valency: int = 0,
-        is_metal: int = 0,
-        e_neg: int = 0,
-    ):
-        self.symbol = symbol
-        self.name = name
-        self.group = group
-        self.atomic_number = at_num
-        self.oxi_states = oxi
-        self.valency = valency
-        self.is_metal = is_metal
-        self.electronegativity = e_neg
 
 
 def load_ions(filename: str):
@@ -89,24 +30,6 @@ def load_ions(filename: str):
 
 
 ion_charge = load_ions("Ions.csv")
-
-
-class Comp:
-    def __init__(
-        self,
-        formula: str,
-        name: str,
-        compound_type=ComType.GENERIC,
-        ions: list = [],
-        count: int = 0,
-        ph: float = 7,
-    ):
-        self.formula = formula
-        self.name = name
-        self.compound_type = compound_type
-        self.ions = ions
-        self.ion_count = count
-        self.ph = ph
 
 
 def extract_ions(formula: str):
@@ -172,71 +95,30 @@ def extract_ions(formula: str):
     return parse_group(formula)
 
 
-def combination(r1: Comp, r2: Comp):
-    p = ""
-    i1 = ion_charge[r1.ions[0]]
-    i2 = ion_charge[r2.ions[0]]
+def decomposition(compound):
+    ions = extract_ions(compound)
+    decomposed_ions = []
+    for i in ions:
+        if len(i) > 1 and i.isupper():
+            decomposed_ions += i.split()
+        decomposed_ions += i
+    for d in decomposed_ions:
+        if d.isdigit():
+            decomposed_ions.remove(d)
 
-    if i1 == -1 * i2:
-        p = r1.ions[0] + r2.ions[0]
-    else:
-        p = r1.ions[0] + str(i2) + r2.ions[0] + str(i1)
+    decomposed_ions = list(set(decomposed_ions))
+    print(decomposed_ions)
 
-    return tidy(p)
+    results = []
+    for i in range(len(decomposed_ions)):
+        for j in range(i + 1, len(decomposed_ions)):
+            results += shuffle([decomposed_ions[i], decomposed_ions[j]])
 
+    for r in results:
+        if r == compound:
+            results.remove(r)
 
-def decomposition(r: Comp): ...
-
-
-def single_displacement(r1: Comp, r2: Comp):
-    p1, p2 = "", ""
-    r1_i1 = ion_charge[r1.ions[0]]
-    r2_i1 = ion_charge[r2.ions[0]]
-    r2_i2 = ion_charge[r2.ions[1]]
-
-    if r1_i1 == -1 * r2_i2:
-        p1 = r1.ions[0] + r2.ions[1]
-        p2 = r2.ions[0]
-    else:
-        p1 = r1.ions[0] + str(r2_i2) + r2.ions[1] + str(r1_i1)
-        p2 = r2.ions[0]
-
-    p1, p2 = tidy(p1), tidy(p2)
-    return [p1, p2]
-
-
-def oxidation(r1: Comp):
-    o = Comp("O2", "Oxygen", ComType.GENERIC, ["O--"], 1, 7)
-    p = ""
-    i1 = ion_charge[r1.ions[0]]
-    i2 = ion_charge[o.ions[0]]
-    if ion_charge[r1.ions[0]] == 2:
-        p = r1.ions[0] + o.ions[0]
-        return tidy(p)
-    else:
-        p = r1.ions[0] + str(i2) + o.ions[0] + str(i1)
-        return tidy(p)
-
-
-def double_displacement(r1: Comp, r2: Comp):
-    p1, p2 = "", ""
-    r1_i1 = ion_charge[r1.ions[0]]
-    r1_i2 = ion_charge[r1.ions[1]]
-    r2_i1 = ion_charge[r2.ions[0]]
-    r2_i2 = ion_charge[r2.ions[1]]
-
-    if r1_i1 == -1 * r2_i2:
-        p1 = r1.ions[0] + r2.ions[1]
-    else:
-        p1 = r1.ions[0] + str(r2_i2) + r2.ions[1] + str(r1_i1)
-
-    if r2_i1 == -1 * r1_i2:
-        p2 = r2.ions[0] + r1.ions[1]
-    else:
-        p2 = r2.ions[0] + str(r1_i2) + r1.ions[1] + str(r2_i1)
-
-    p1, p2 = tidy(p1), tidy(p2)
-    return [p1, p2]
+    return results
 
 
 def tidy(arg):
@@ -273,6 +155,11 @@ def shuffle(reactants: list):
             c1 = int(c1 / gcd)
             c2 = int(c2 / gcd)
 
+            if len(cation) > 1 and cation.isupper() and abs(c2) > 1:
+                cation = f"({cation})"
+            if len(anion) > 1 and anion.isupper() and abs(c1) > 1:
+                anion = f"({anion})"
+
             products.append(cation + str(c2) + anion + str(c1))
             products = list(set(products))
 
@@ -284,7 +171,7 @@ def shuffle(reactants: list):
     return final_products
 
 
-if __name__ == "__main__":
+def test():
     acid_base_tests = [
         ["HCl", "NaOH"],
         ["H2SO4", "KOH"],
@@ -307,10 +194,10 @@ if __name__ == "__main__":
         ["Na2S", "Cd(NO3)2"],
     ]
     synthesis_tests = [
-        ["H2", "O2"],
-        ["Na", "Cl2"],
-        ["N2", "H2"],
-        ["Ca", "O2"],
+        ["H", "O"],
+        ["Na", "Cl"],
+        ["N", "H"],
+        ["Ca", "O"],
     ]
 
     print("\nAcid base test:")
@@ -331,8 +218,20 @@ if __name__ == "__main__":
             f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
         )
 
-    print("\nSynthesis/Combinationtest:")
+    print("\nSynthesis/Combination test:")
     for reactants in synthesis_tests:
         print(
             f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
         )
+
+
+def react(reactant: list):
+    if len(reactant) == 1:
+        return decomposition(reactant[0])
+    else:
+        return shuffle(reactant)
+
+
+if __name__ == "__main__":
+    # print(react(["Mg(OH)2", "H2SO4"]))
+    ...
