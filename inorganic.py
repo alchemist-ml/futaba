@@ -1,5 +1,7 @@
 from enum import Enum
 import csv
+import re
+from chemlib import Compound
 
 
 class ElGroup(Enum):
@@ -35,7 +37,7 @@ class ComType(Enum):
     BORIDE = 17
     SILICIDE = 18
     COORDINATION = 19
-    ELEMENT = 20
+    GENERIC = 20
 
 
 class Element:
@@ -68,7 +70,7 @@ def load_ions(filename: str):
         next(reader)
 
         for row in reader:
-            if row[0].startswith("#"):
+            if row[0].startswith('#---'):
                 continue
 
             try:
@@ -84,21 +86,15 @@ def load_ions(filename: str):
 ion_charge = load_ions("Ions.csv")
 
 
-# Conjugate acids for common neutral bases
-Conjugate_Acid = {
-    "NH3": "NH4+",
-}
-
-
-class Compound:
+class Comp:
     def __init__(
         self,
         formula: str,
         name: str,
-        compound_type: ComType,
-        ions: list,
-        count: int,
-        ph: float,
+        compound_type=ComType.GENERIC,
+        ions: list = [],
+        count: int = 0,
+        ph: float = 7,
     ):
         self.formula = formula
         self.name = name
@@ -108,10 +104,70 @@ class Compound:
         self.ph = ph
 
 
-def extract_ions(c: Compound): ...
+def extract_ions(formula: str):
+    polyatomic_ions = [
+        ion
+        for ion in ion_charge.keys()
+        if len(ion) > 1 and ion not in ["H", "C", "N", "O", "F", "Cl", "Br", "I"]
+    ]
+    polyatomic_ions.sort(key=len, reverse=True)
+
+    escaped_ions = [re.escape(ion) for ion in polyatomic_ions]
+
+    element_pattern = r"[A-Z][a-z]?"
+
+    all_patterns = "|".join(escaped_ions + [element_pattern])
+
+    def parse_group(group_str, multiplier=1):
+        ions = []
+        i = 0
+        n = len(group_str)
+
+        while i < n:
+            if group_str[i] == "(":
+                depth = 1
+                j = i + 1
+                while j < n and depth > 0:
+                    if group_str[j] == "(":
+                        depth += 1
+                    elif group_str[j] == ")":
+                        depth -= 1
+                    j += 1
+
+                inner_content = group_str[i + 1 : j - 1]
+
+                sub_multiplier = 1
+                if j < n and group_str[j].isdigit():
+                    k = j
+                    while k < n and group_str[k].isdigit():
+                        k += 1
+                    sub_multiplier = int(group_str[j:k])
+                    j = k
+
+                inner_ions = parse_group(inner_content, sub_multiplier)
+                ions.extend(inner_ions)
+                i = j
+
+            else:
+                match = re.match(f"({all_patterns})(\\d*)", group_str[i:])
+                if match:
+                    ion = match.group(1)
+                    subscript = match.group(2)
+                    count = int(subscript) if subscript else 1
+
+                    for _ in range(count * multiplier):
+                        ions.append(ion)
+
+                    i += len(match.group(0))
+                else:
+                    i += 1
+
+        return ions
+
+    return parse_group(formula)
 
 
-def combination(r1: Compound, r2: Compound):
+def combination(r1: Comp, r2: Comp):
     p = ""
     i1 = ion_charge[r1.ions[0]]
     i2 = ion_charge[r2.ions[0]]
@@ -124,10 +180,10 @@ def combination(r1: Compound, r2: Compound):
     return tidy(p)
 
 
-def decomposition(r: Compound): ...
+def decomposition(r: Comp): ...
 
 
-def single_displacement(r1: Compound, r2: Compound):
+def single_displacement(r1: Comp, r2: Comp):
     p1, p2 = "", ""
     r1_i1 = ion_charge[r1.ions[0]]
     r2_i1 = ion_charge[r2.ions[0]]
@@ -143,8 +199,8 @@ def single_displacement(r1: Compound, r2: Compound):
     return tidy(p1, p2)
 
 
-def oxidation(r1: Compound):
-    o = Compound("O2", "Oxygen", ComType.ELEMENT, ["O--"], 1, 7)
+def oxidation(r1: Comp):
+    o = Comp("O2", "Oxygen", ComType.GENERIC, ["O--"], 1, 7)
     p = ""
     i1 = ion_charge[r1.ions[0]]
     i2 = ion_charge[o.ions[0]]
@@ -156,7 +212,7 @@ def oxidation(r1: Compound):
         return tidy(p)
 
 
-def double_displacement(r1: Compound, r2: Compound):
+def double_displacement(r1: Comp, r2: Comp):
     p1, p2 = "", ""
     r1_i1 = ion_charge[r1.ions[0]]
     r1_i2 = ion_charge[r1.ions[1]]
@@ -186,32 +242,37 @@ def tidy(*args: str):
     return products
 
 
-def acid_base_test():
-
-    r1 = Compound("HCl", "Sulphuric Acid", ComType.ACID, ["H+", "Cl-"], 2, 1)
-    r2 = Compound("NaOH", "Sodium Chloride", ComType.BASE, ["Na+", "OH-"], 2, 14)
-
-    if r1.compound_type == ComType.ACID and r2.compound_type == ComType.BASE:
-        products = double_displacement(r1, r2)
-        print(f"{r1.formula} + {r2.formula}")
-        print(products)
-
-
-def combination_test():
-    r1 = Compound("Mg", "Magnesium", ComType.ELEMENT, ["Mg++"], 1, 7)
-    r2 = Compound("O2", "Oxygen", ComType.ELEMENT, ["O--"], 1, 7)
-
-    products = combination(r1, r2)
-    print(f"{r1.formula} + {r2.formula}")
-    print(products)
-
-
-def oxidation_test():
-    r = Compound("Ca", "Calcium", ComType.ELEMENT, ["Ca++"], 1, 7)
-    product = oxidation(r)
-    print(f"{r.formula} + O2")
-    print(product)
+def shuffle(ions: list): ...
 
 
 if __name__ == "__main__":
-    oxidation_test()
+
+    test_formulas = [
+        "H2SO4",
+        "NaCl",
+        "Ca(OH)2",
+        "(NH4)2SO4",
+        "Al2(SO4)3",
+        "Fe2(SO4)3",
+        "KMnO4",
+        "Na2Cr2O7",
+        "CH3COOH",
+        "NaHCO3",
+        "Mg(NO3)2",
+        "Ca3(PO4)2",
+        "NH4Cl",
+        "NaOH",
+        "CuSO4",
+        "FeCl3",
+        "Na2CO3",
+        "CaCO3",
+    ]
+
+    for formula in test_formulas:
+        ions = extract_ions(formula)
+        for i in ions:
+            if ions.count(i) > 1:
+                ions.append(i + str(ions.count(i)))
+                ions = list(set(ions))
+
+        print(formula, ions)
