@@ -6,7 +6,6 @@ import csv
 from collections import defaultdict
 import math
 import re
-from chemlib import Compound
 import json
 import sys
 
@@ -103,6 +102,53 @@ def extract_ions(formula: str):
 
 def decomposition(compound):
     ions = extract_ions(compound)
+
+    # carbonates decompose to metal oxide + CO2
+    if "CO3" in ions:
+        cations = [ion for ion in ions if ion != "CO3"]
+        if cations:
+            metal = cations[0]
+            return [f"{metal}O", "CO2"]
+
+    # metal hydroxides decompose to metal oxide + water
+    if "OH" in ions:
+        cations = [ion for ion in ions if ion != "OH"]
+        if cations:
+            metal = cations[0]
+            return [f"{metal}O", "H2O"]
+
+    # hydrate decomposition
+    # e.g., CuSO4·5H2O → CuSO4 + 5H2O
+    if "·" in compound:
+        parts = compound.split("·")
+        anhydrous = parts[0]
+        water_count = ""
+        if len(parts) > 1:
+            water_count = parts[1][0] if parts[1][0].isdigit() else "1"
+        return [anhydrous, "H2O"]
+
+    # chlorates decompose to chloride + oxygen (e.g. 2KClO3 → 2KCl + 3O2)
+    if "ClO3" in ions or "ClO4" in ions:
+        anion_type = "ClO4" if "ClO4" in ions else "ClO3"
+        cations = [ion for ion in ions if anion_type not in ion]
+        if cations:
+            metal = cations[0]
+            return [f"{metal}Cl", "O2"]
+
+    # metal nitrates decompose to metal nitrite + oxygen
+    if "NO3" in ions:
+        cations = [ion for ion in ions if ion != "NO3"]
+        if cations:
+            metal = cations[0]
+            return [f"{metal}NO2", "O2"]
+
+    # metal sulfites decompose to metal oxide + SO2
+    if "SO3" in ions and "SO4" not in ions:
+        cations = [ion for ion in ions if ion != "SO3"]
+        if cations:
+            metal = cations[0]
+            return [f"{metal}O", "SO2"]
+
     decomposed_ions = []
     for i in ions:
         if len(i) > 1 and i.isupper():
@@ -169,6 +215,103 @@ def shuffle(reactants: list):
             products.append(cation + str(c2) + anion + str(c1))
             products = list(set(products))
 
+    # special handling for metal-acid reactions to produce H2 (eg. Zn + HCl -> ZnCl + H2)
+    metals = ["Zn", "Mg", "Fe", "Al", "Ca", "Cu", "Pb", "Ni", "Sn", "Cr", "Mn"]
+    has_metal = any(metal in reactants for metal in metals)
+    has_acid = any("H" in r for r in reactants)
+    has_hydrogen_in_products = any("H" in p for p in products)
+
+    if has_metal and has_acid and has_hydrogen_in_products:
+        products_to_remove = []
+        for p in products:
+            if "H" in p and p != "H2":
+                products_to_remove.append(p)
+
+        for p in products_to_remove:
+            if p in products:
+                products.remove(p)
+
+        if "H2" not in products:
+            products.append("H2")
+
+    # metals combust to form metal oxide
+    if len(reactants) == 2 and "O2" in reactants:
+        non_oxygen = (
+            [r for r in reactants if r != "O2"][0]
+            if any(r != "O2" for r in reactants)
+            else None
+        )
+        if non_oxygen and non_oxygen in metals:
+            products.clear()
+            products.append(f"{non_oxygen}O")
+
+    # nonmetal combustion (e.g. S + O2 → SO2, C + O2 → CO2)
+    nonmetals = ["C", "S", "P", "N"]
+    if len(reactants) == 2 and "O2" in reactants:
+        non_oxygen = (
+            [r for r in reactants if r != "O2"][0]
+            if any(r != "O2" for r in reactants)
+            else None
+        )
+        if non_oxygen and non_oxygen in nonmetals:
+            products.clear()
+            if non_oxygen == "C":
+                products.append("CO2")
+            elif non_oxygen == "S":
+                products.append("SO2")
+            elif non_oxygen == "P":
+                products.append("P2O5")
+            elif non_oxygen == "N":
+                products.append("NO2")
+
+    # metal + nonmetal → salt
+    if len(reactants) == 2:
+        r1, r2 = reactants[0], reactants[1]
+        r1_is_metal = r1 in metals
+        r2_is_metal = r2 in metals
+        r1_is_nonmetal = r1 in nonmetals
+        r2_is_nonmetal = r2 in nonmetals
+
+        # metal + monmetal combination
+        if (r1_is_metal and r2_is_nonmetal) or (r2_is_metal and r1_is_nonmetal):
+            metal = r1 if r1_is_metal else r2
+            nonmetal = r2 if r1_is_metal else r1
+
+            if nonmetal == "Cl":
+                products = [f"{metal}Cl"]
+            elif nonmetal == "Br":
+                products = [f"{metal}Br"]
+            elif nonmetal == "I":
+                products = [f"{metal}I"]
+            elif nonmetal == "S":
+                products = [f"{metal}S"]
+            elif nonmetal == "O":
+                products = [f"{metal}O"]
+            elif nonmetal == "N":
+                products = [f"{metal}N"]
+
+    # halogen displacement
+    halogens = ["F", "Cl", "Br", "I"]
+    halogen_order = ["F", "Cl", "Br", "I"]  # reactivity order
+
+    for halogen in halogens:
+        if halogen in reactants:
+            other = [r for r in reactants if r != halogen]
+            if other:
+                compound = other[0]
+
+                for other_halogen in halogens:
+                    if other_halogen in compound:
+                        if halogen_order.index(halogen) < halogen_order.index(
+                            other_halogen
+                        ):
+                            products.clear()
+                            new_compound = compound.replace(other_halogen, halogen)
+                            displaced = other_halogen
+                            products.append(new_compound)
+                            products.append(displaced)
+                        break
+
     final_products = []
     for p in products:
         if tidy(p) in reactants:
@@ -205,6 +348,24 @@ def test():
         ["N", "H"],
         ["Ca", "O"],
     ]
+    combustion_tests = [
+        ["C", "O2"],
+        ["S", "O2"],
+        ["Na", "O2"],
+        ["Mg", "O2"],
+    ]
+    halogen_displacement_tests = [
+        ["Cl2", "NaBr"],
+        ["Br2", "NaCl"],
+        ["F2", "NaCl"],
+    ]
+
+    decomposition_tests = [
+        "CaCO3",
+        "Mg(OH)2",
+        "KClO3",
+        "Ca(NO3)2",
+    ]
 
     print("\nAcid base test:")
     for reactants in acid_base_tests:
@@ -229,6 +390,22 @@ def test():
         print(
             f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
         )
+
+    print("\nCombustion test:")
+    for reactants in combustion_tests:
+        print(
+            f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
+        )
+
+    print("\nHalogen displacement test:")
+    for reactants in halogen_displacement_tests:
+        print(
+            f"{reactants[0]} + {reactants[1]} -> possible results: {shuffle(reactants)}"
+        )
+
+    print("\nDecomposition test:")
+    for compound in decomposition_tests:
+        print(f"{compound} -> {react([compound])}")
 
 
 def react(reactant: list):
