@@ -1,13 +1,11 @@
 import pubchempy as pcp
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from rdkit.Chem import AllChem, Draw
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 import io
 import base64
-
-app = Flask(__name__)
-CORS(app)
+import json
+import sys
+import argparse
 
 class Chemical():
     def __init__(self, name, formula, iupac, synonyms, weight, cano_smiles, iso_smiles):
@@ -71,7 +69,7 @@ def fwd(reactant: list, reagent: list) -> str:
     for re in reagent[1:]:
         re_smiles += '.'+re
     
-    model_fwd = "sagawa/ReactionT5v2-forward"
+    model_fwd = "C:\\Users\\ACER\\alchemist\\lib\\futaba\\Alchemist_Model"
     return rxn(f"REACTANT:{rc_smiles}REAGENT:{re_smiles}", model_fwd)
 
 def create_reaction_image(reactants, products):
@@ -96,38 +94,43 @@ def create_reaction_image(reactants, products):
         print(f"Image creation error: {e}")
         return None
 
-@app.route('/chem_info', methods=['POST'])
-def get_chem_info():
-    data = request.json
-    query = data['query']
-    query_type = data['query_type']
-    chem = chem_info(query, query_type)
-    if isinstance(chem, str):
-        return jsonify({"error": chem})
-    return jsonify({
-        "name": chem.name,
-        "formula": chem.formula,
-        "iupac_name": chem.iupac_name,
-        "synonyms": chem.synonyms,
-        "weight": str(chem.weight),
-        "cano_smiles": chem.cano_smiles,
-        "iso_smiles": chem.iso_smiles
-    })
-
-@app.route('/predict', methods=['POST'])
-def predict():
-    data = request.json
-    reactants = data['reactants']
-    reagents = data.get('reagents', [])
-    
-    reaction_products = fwd(reactants, reagents)
-    
-    image_base64 = create_reaction_image(reactants, reaction_products.split('.'))
-    
-    return jsonify({
-        "reaction": reaction_products,
-        "image_base64": image_base64
-    })
-
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    parser = argparse.ArgumentParser(description='Organic Chemistry Assistant CLI')
+    parser.add_argument('command', choices=['chem_info', 'predict'], help='Command to execute')
+    parser.add_argument('--query', type=str, help='Query string (for chem_info)')
+    parser.add_argument('--query_type', type=str, help='Query type: name, formula, smiles (for chem_info)')
+    parser.add_argument('--reactants', type=str, help='JSON array of reactant SMILES (for predict)')
+    parser.add_argument('--reagents', type=str, default='[]', help='JSON array of reagent SMILES (for predict)')
+    
+    args = parser.parse_args()
+    
+    try:
+        if args.command == 'chem_info':
+            result = chem_info(args.query, args.query_type)
+            if isinstance(result, str):
+                print(json.dumps({"error": result}))
+            else:
+                print(json.dumps({
+                    "name": result.name,
+                    "formula": result.formula,
+                    "iupac_name": result.iupac_name,
+                    "synonyms": result.synonyms,
+                    "weight": str(result.weight),
+                    "cano_smiles": result.cano_smiles,
+                    "iso_smiles": result.iso_smiles
+                }))
+        
+        elif args.command == 'predict':
+            reactants = json.loads(args.reactants)
+            reagents = json.loads(args.reagents)
+            
+            reaction_products = fwd(reactants, reagents)
+            image_base64 = create_reaction_image(reactants, reaction_products.split('.'))
+            
+            print(json.dumps({
+                "reaction": reaction_products,
+                "image_base64": image_base64
+            }))
+    
+    except Exception as e:
+        print(json.dumps({"error": str(e)}))
